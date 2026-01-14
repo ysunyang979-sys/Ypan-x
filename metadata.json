@@ -1,0 +1,5 @@
+{
+  "name": "Personal Cloud Drive",
+  "description": "A simple, personal online file storage application for managing your files securely in the browser. Features include file upload, download, and deletion within a private, login-protected environment.",
+  "requestFramePermissions": []
+}
