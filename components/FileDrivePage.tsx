@@ -1,5 +1,5 @@
 
-import React, { useState, useCallback, useRef } from 'react';
+import React, { useState, useCallback, useRef, useEffect } from 'react';
 import FileList from './FileList';
 import { UploadIcon } from './icons/UploadIcon';
 
@@ -7,18 +7,83 @@ interface FileDrivePageProps {
   onLogout: () => void;
 }
 
+interface StoredFile {
+  id: string;
+  file: File;
+}
+
+const DB_NAME = 'PersonalDriveDB';
+const STORE_NAME = 'files';
+
 const FileDrivePage: React.FC<FileDrivePageProps> = ({ onLogout }) => {
   const [files, setFiles] = useState<File[]>([]);
   const [isDragOver, setIsDragOver] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Initialize DB and load files
+  useEffect(() => {
+    const request = indexedDB.open(DB_NAME, 1);
+
+    request.onupgradeneeded = (event: any) => {
+      const db = event.target.result;
+      if (!db.objectStoreNames.contains(STORE_NAME)) {
+        db.createObjectStore(STORE_NAME, { keyPath: 'id' });
+      }
+    };
+
+    request.onsuccess = (event: any) => {
+      const db = event.target.result;
+      const transaction = db.transaction(STORE_NAME, 'readonly');
+      const store = transaction.objectStore(STORE_NAME);
+      const getAllRequest = store.getAll();
+
+      getAllRequest.onsuccess = () => {
+        const storedItems: StoredFile[] = getAllRequest.result;
+        setFiles(storedItems.map(item => item.file));
+        setIsLoading(false);
+      };
+    };
+
+    request.onerror = () => {
+      console.error("IndexedDB error");
+      setIsLoading(false);
+    };
+  }, []);
+
+  const saveFileToDB = (file: File) => {
+    const request = indexedDB.open(DB_NAME, 1);
+    request.onsuccess = (event: any) => {
+      const db = event.target.result;
+      const transaction = db.transaction(STORE_NAME, 'readwrite');
+      const store = transaction.objectStore(STORE_NAME);
+      // Use a unique ID based on file metadata since real IDs aren't provided by the OS
+      const id = `${file.name}-${file.lastModified}-${file.size}`;
+      store.put({ id, file });
+    };
+  };
+
+  const removeFileFromDB = (file: File) => {
+    const request = indexedDB.open(DB_NAME, 1);
+    request.onsuccess = (event: any) => {
+      const db = event.target.result;
+      const transaction = db.transaction(STORE_NAME, 'readwrite');
+      const store = transaction.objectStore(STORE_NAME);
+      const id = `${file.name}-${file.lastModified}-${file.size}`;
+      store.delete(id);
+    };
+  };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files) {
-      setFiles(prevFiles => [...prevFiles, ...Array.from(e.target.files!)]);
+      const newFiles = Array.from(e.target.files);
+      newFiles.forEach(saveFileToDB);
+      setFiles(prevFiles => [...prevFiles, ...newFiles]);
     }
   };
 
   const handleDeleteFile = useCallback((fileToDelete: File) => {
+    removeFileFromDB(fileToDelete);
     setFiles(prevFiles => prevFiles.filter(file => file !== fileToDelete));
   }, []);
 
@@ -51,11 +116,12 @@ const FileDrivePage: React.FC<FileDrivePageProps> = ({ onLogout }) => {
     e.preventDefault();
     setIsDragOver(false);
     if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-      setFiles(prevFiles => [...prevFiles, ...Array.from(e.dataTransfer.files)]);
+      const droppedFiles = Array.from(e.dataTransfer.files);
+      droppedFiles.forEach(saveFileToDB);
+      setFiles(prevFiles => [...prevFiles, ...droppedFiles]);
       e.dataTransfer.clearData();
     }
   };
-
 
   return (
     <div className="flex flex-col h-screen">
@@ -92,17 +158,24 @@ const FileDrivePage: React.FC<FileDrivePageProps> = ({ onLogout }) => {
               Upload Files
             </button>
             <p className="mt-4 text-sm text-gray-500 dark:text-gray-400">or drag and drop files here</p>
-            <p className="mt-1 text-xs text-center text-yellow-600 dark:text-yellow-400 p-2 bg-yellow-100 dark:bg-gray-700 rounded-md">
-              Note: Files are stored in browser memory and will be lost on page refresh.
+            <p className="mt-1 text-xs text-center text-green-600 dark:text-green-400 p-2 bg-green-100 dark:bg-gray-700 rounded-md">
+              Files are saved locally in your browser's IndexedDB and will persist after refresh.
             </p>
           </div>
           
           <div className="mt-8">
-            <FileList 
-              files={files} 
-              onDelete={handleDeleteFile} 
-              onDownload={handleDownloadFile} 
-            />
+            {isLoading ? (
+              <div className="flex justify-center items-center py-20">
+                <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600"></div>
+                <span className="ml-3 text-gray-600 dark:text-gray-400">Loading your files...</span>
+              </div>
+            ) : (
+              <FileList 
+                files={files} 
+                onDelete={handleDeleteFile} 
+                onDownload={handleDownloadFile} 
+              />
+            )}
           </div>
         </div>
       </main>
